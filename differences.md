@@ -500,6 +500,12 @@ A phone that's opened flat, and that hasn't been held up since the screen came o
 
 On Android 15 and later, TalkBack connects to braille displays that use the HID braille standard over Bluetooth, but only lists displays whose names it knows, so newer displays and braille terminals were left out. Backtalk lists any Bluetooth device that offers HID, whatever its name, and connecting checks that it's a braille display, so other HID devices, such as keyboards, can appear in the list too. TalkBack also refused displays that send their keys and receive their cells in separate HID reports, as the standard allows; Backtalk connects to those.
 
+### Displays from other apps
+
+Apps can give Backtalk a braille display that it can't connect to on its own, such as the built-in keys and cells of a braille notetaker. Backtalk uses it like a display connected through Bluetooth or USB: its keys navigate and type with the same commands, and its cells show what Backtalk shows. A display with keys and no cells works too.
+
+An app can only provide a display once you allow it. It asks for Backtalk's braille display permission, which you can grant when it asks, or with `adb shell pm grant`, and take back in the app's permissions in Android's settings. [Providing a braille display from another app](docs/braille-display-api.md) describes the API for app developers.
+
 ## Image and screen descriptions
 
 ### Gemini API key

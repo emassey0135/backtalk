@@ -114,6 +114,11 @@ public class BrailleDisplayManager {
     return connectedService && connectedToDisplay;
   }
 
+  /** Whether a display connected through BRLTTY is ready. */
+  public boolean isDisplayConnected() {
+    return canSendRenderPackets();
+  }
+
   private boolean canSendRenderPackets() {
     return connectedService
         && connectedToDisplay
