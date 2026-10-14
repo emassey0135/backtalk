@@ -343,8 +343,20 @@ public final class ExternalBrailleDisplays {
       display = null;
     }
 
+    /**
+     * Whether this is still the app's binding. Android can still deliver calls it queued for one
+     * that has been replaced, such as while the app is being updated.
+     */
+    private boolean isCurrent() {
+      return connections.get(component) == this;
+    }
+
     @Override
     public void onServiceConnected(ComponentName name, IBinder binder) {
+      if (!isCurrent()) {
+        unbind();
+        return;
+      }
       // Taking the permission back stops the app, but Android starts its service again for this
       // binding, so check again.
       if (context
@@ -365,6 +377,9 @@ public final class ExternalBrailleDisplays {
 
     @Override
     public void onServiceDisconnected(ComponentName name) {
+      if (!isCurrent()) {
+        return;
+      }
       // The app stopped; Android binds it again when it can.
       display = null;
       stopDisplay(this);
@@ -372,6 +387,10 @@ public final class ExternalBrailleDisplays {
 
     @Override
     public void onBindingDied(ComponentName name) {
+      if (!isCurrent()) {
+        unbind();
+        return;
+      }
       // The app was updated or force stopped, and this binding won't come back.
       stopDisplay(this);
       unbind();
