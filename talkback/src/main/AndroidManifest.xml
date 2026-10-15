@@ -103,13 +103,13 @@
         android:description="@string/permission_speak_description"
         android:protectionLevel="normal" />
 
-    <!-- Granted by the user, or with adb shell pm grant, to an app that provides a braille display.
-         See docs/braille-display-api.md. -->
+    <!-- Held by an app that can provide a braille display, so that it can ask to be one. Backtalk
+         uses it only once the user allows it in Backtalk. See docs/braille-display-api.md. -->
     <permission
         android:name="fyi.quin.backtalk.permission.BRAILLE_DISPLAY"
         android:label="@string/permission_braille_display_label"
         android:description="@string/permission_braille_display_description"
-        android:protectionLevel="dangerous" />
+        android:protectionLevel="normal" />
     <!-- Required by a braille display app's service, so that only Backtalk can bind it. -->
     <permission
         android:name="fyi.quin.backtalk.permission.BIND_BRAILLE_DISPLAY"

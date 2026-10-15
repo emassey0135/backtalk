@@ -407,10 +407,10 @@
     <string name="permission_speak_label">speak through Backtalk</string>
     <!-- Description of that permission. [CHAR LIMIT=NONE] -->
     <string name="permission_speak_description">Lets the app ask to say text in your Backtalk voice. Backtalk asks you before the app can speak.</string>
-    <!-- Name of the permission that an app needs to be a braille display for Backtalk, shown when the app asks for it and in the app's permission list. [CHAR LIMIT=NONE] -->
-    <string name="permission_braille_display_label">be a braille display for Backtalk</string>
+    <!-- Name of the permission that an app needs to ask to be a braille display for Backtalk, shown in the app's permission list. [CHAR LIMIT=NONE] -->
+    <string name="permission_braille_display_label">ask to be a braille display for Backtalk</string>
     <!-- Description of that permission. [CHAR LIMIT=NONE] -->
-    <string name="permission_braille_display_description">Lets the app send braille keys and commands to Backtalk, which can control your device as a braille display can, and show what Backtalk shows on a braille display.</string>
+    <string name="permission_braille_display_description">Lets the app ask to be a braille display for Backtalk. If you allow it in Backtalk, it can read everything on the screen and control your device. Backtalk asks you first.</string>
 
     <!--
       Source: Preference for speaking phonetic letter for letters.

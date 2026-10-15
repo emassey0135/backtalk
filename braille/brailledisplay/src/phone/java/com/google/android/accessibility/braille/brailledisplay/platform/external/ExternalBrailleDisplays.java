@@ -22,9 +22,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.OnSharedPreferenceChangeListener;
 import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
-import android.content.pm.ServiceInfo;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -37,6 +37,8 @@ import com.google.android.accessibility.braille.brailledisplay.BrailleDisplayLog
 import com.google.android.accessibility.braille.brailledisplay.SupportedCommand;
 import com.google.android.accessibility.braille.brailledisplay.controller.utils.BrailleKeyBindingUtils;
 import com.google.android.accessibility.braille.brailledisplay.platform.Controller;
+import com.google.android.accessibility.braille.brailledisplay.platform.DisplayerInterface;
+import com.google.android.accessibility.braille.brailledisplay.platform.external.ExternalDisplayApps.State;
 import com.google.android.accessibility.braille.brltty.BrailleInputEvent;
 import fyi.quin.backtalk.braille.IBrailleDisplay;
 import fyi.quin.backtalk.braille.IBrailleDisplayHost;
@@ -50,27 +52,17 @@ import java.util.Set;
 
 /**
  * Braille displays that other apps provide. Backtalk binds the display service of each app that the
- * user has allowed. One display at a time drives the braille controller, as a display connected
- * through BRLTTY does, and any others that have started wait for it to stop. See
+ * user has allowed in Backtalk, and asks about apps it hasn't been told about. One display at a time
+ * drives the braille controller. A display connected through BRLTTY comes first: while one is, the
+ * others wait, and one that is in use steps aside when it connects. See
  * docs/braille-display-api.md.
  */
 public final class ExternalBrailleDisplays {
   private static final String TAG = "ExternalBrailleDisplays";
 
-  /** The action of a display app's service. */
-  public static final String ACTION_BRAILLE_DISPLAY = "fyi.quin.backtalk.action.BRAILLE_DISPLAY";
-
-  /** A display app sends this to Backtalk when it has been allowed, so that Backtalk binds it. */
+  /** A display app sends this to Backtalk to have it look for displays again. */
   public static final String ACTION_BRAILLE_DISPLAYS_CHANGED =
       "fyi.quin.backtalk.action.BRAILLE_DISPLAYS_CHANGED";
-
-  /** The permission the user grants to a display app. */
-  public static final String PERMISSION_BRAILLE_DISPLAY =
-      "fyi.quin.backtalk.permission.BRAILLE_DISPLAY";
-
-  /** The permission a display app's service requires, which only Backtalk holds. */
-  public static final String PERMISSION_BIND_BRAILLE_DISPLAY =
-      "fyi.quin.backtalk.permission.BIND_BRAILLE_DISPLAY";
 
   private static final long UNLOCK_CHECK_MS = 1000;
 
@@ -80,6 +72,17 @@ public final class ExternalBrailleDisplays {
   private final Map<ComponentName, Connection> connections = new HashMap<>();
   private Connection active;
   private boolean started;
+  // A display connected through BRLTTY is in use, so no display from an app can be.
+  private boolean brlttyStarted;
+  private final SharedPreferences approvals;
+  // Whatever the user allows or stops allowing takes effect at once.
+  private final OnSharedPreferenceChangeListener approvalsChanged =
+      (prefs, key) -> {
+        if (ExternalDisplayApps.PREF_ALLOWED.equals(key)
+            || ExternalDisplayApps.PREF_DENIED.equals(key)) {
+          refresh();
+        }
+      };
   // Looks again as soon as the user is unlocked; see refresh().
   private final Runnable refreshWhenUnlocked = this::refresh;
 
@@ -99,6 +102,63 @@ public final class ExternalBrailleDisplays {
   public ExternalBrailleDisplays(Context context, Controller controller) {
     this.context = context;
     this.controller = controller;
+    this.approvals = ExternalDisplayApps.prefs(context);
+  }
+
+  /**
+   * The controller that BRLTTY's displays are to drive in place of the braille controller itself, so
+   * that the two kinds of display take turns: a display from an app steps aside while a BRLTTY one is
+   * in use, and isn't stopped by BRLTTY when it isn't.
+   */
+  public Controller brlttyController() {
+    return new Controller() {
+      @Override
+      public void onStart(DisplayerInterface displayer) {
+        brlttyStarted = true;
+        if (active != null) {
+          active.waiting = true;
+          stopActive();
+        }
+        controller.onStart(displayer);
+      }
+
+      @Override
+      public void onStop() {
+        if (brlttyStarted) {
+          brlttyStarted = false;
+          controller.onStop();
+          activateWaiting();
+        } else if (active == null) {
+          // Nothing is in use, so this changes nothing a display from an app uses.
+          controller.onStop();
+        }
+      }
+
+      @Override
+      public void onDestroy() {
+        controller.onDestroy();
+      }
+
+      @Override
+      public void onAccessibilityEvent(AccessibilityEvent accessibilityEvent) {
+        controller.onAccessibilityEvent(accessibilityEvent);
+      }
+
+      @Override
+      public void onBrailleInputEvent(BrailleInputEvent brailleInputEvent) {
+        controller.onBrailleInputEvent(brailleInputEvent);
+      }
+
+      @Override
+      public void onReadingControlSettingsChanged(CharSequence readingControlDescription) {
+        controller.onReadingControlSettingsChanged(readingControlDescription);
+      }
+
+      @Override
+      public void onReadingControlValueChanged() {
+        controller.onReadingControlValueChanged();
+      }
+    };
   }
 
   /** Binds the displays of the apps that the user has allowed. */
@@ -121,12 +181,13 @@ public final class ExternalBrailleDisplays {
         displaysChanged,
         new IntentFilter(Intent.ACTION_USER_UNLOCKED),
         ContextCompat.RECEIVER_NOT_EXPORTED);
+    approvals.registerOnSharedPreferenceChangeListener(approvalsChanged);
     // Only an app that holds the permission can send this.
     ContextCompat.registerReceiver(
         context,
         displaysChanged,
         new IntentFilter(ACTION_BRAILLE_DISPLAYS_CHANGED),
-        PERMISSION_BRAILLE_DISPLAY,
+        ExternalDisplayApps.PERMISSION_BRAILLE_DISPLAY,
         /* scheduler= */ null,
         ContextCompat.RECEIVER_EXPORTED);
     refresh();
@@ -140,6 +201,7 @@ public final class ExternalBrailleDisplays {
     started = false;
     mainHandler.removeCallbacks(refreshWhenUnlocked);
     context.unregisterReceiver(displaysChanged);
+    approvals.unregisterOnSharedPreferenceChangeListener(approvalsChanged);
     for (Connection connection : connections.values()) {
       connection.unbind();
     }
@@ -149,16 +211,19 @@ public final class ExternalBrailleDisplays {
 
   /**
    * Passes an event on to the controller, so that a display with cells shows what changed. A
-   * display connected through BRLTTY gets events already, so while one is, nothing is passed on
-   * here.
+   * display connected through BRLTTY gets events already, and while one is, none from an app is in
+   * use.
    */
-  public void onAccessibilityEvent(AccessibilityEvent event, boolean brlttyDisplayConnected) {
-    if (active != null && active.cellCount > 0 && !brlttyDisplayConnected) {
+  public void onAccessibilityEvent(AccessibilityEvent event) {
+    if (active != null && active.cellCount > 0) {
       controller.onAccessibilityEvent(event);
     }
   }
 
-  /** Binds newly allowed displays, and unbinds those that are no longer allowed or installed. */
+  /**
+   * Binds newly allowed displays, unbinds those that are no longer allowed or installed, and asks
+   * about apps the user hasn't answered for.
+   */
   private void refresh() {
     if (!started) {
       return;
@@ -174,7 +239,7 @@ public final class ExternalBrailleDisplays {
         mainHandler.postDelayed(refreshWhenUnlocked, UNLOCK_CHECK_MS);
       }
     }
-    Set<ComponentName> allowed = allowedDisplays(0);
+    Set<ComponentName> allowed = allowedDisplays(0, /* ask= */ true);
     Iterator<Map.Entry<ComponentName, Connection>> it = connections.entrySet().iterator();
     while (it.hasNext()) {
       Map.Entry<ComponentName, Connection> entry = it.next();
@@ -200,29 +265,31 @@ public final class ExternalBrailleDisplays {
         return true;
       }
     }
-    return context.getPackageManager().checkPermission(PERMISSION_BRAILLE_DISPLAY, packageName)
-        == PackageManager.PERMISSION_GRANTED;
+    return ExternalDisplayApps.holdsPermission(context, packageName);
   }
 
   private boolean hasAllowedDisplays(int flags) {
-    return !allowedDisplays(flags).isEmpty();
+    return !allowedDisplays(flags, /* ask= */ false).isEmpty();
   }
 
-  private Set<ComponentName> allowedDisplays(int flags) {
-    PackageManager packageManager = context.getPackageManager();
+  /** The display services of the apps the user allowed; {@code ask} asks about the others. */
+  private Set<ComponentName> allowedDisplays(int flags, boolean ask) {
     Set<ComponentName> allowed = new HashSet<>();
-    for (ResolveInfo resolveInfo :
-        packageManager.queryIntentServices(new Intent(ACTION_BRAILLE_DISPLAY), flags)) {
-      ServiceInfo service = resolveInfo.serviceInfo;
-      // The service must be one that only Backtalk can bind, as an accessibility service must be
-      // one that only Android can bind.
-      if (PERMISSION_BIND_BRAILLE_DISPLAY.equals(service.permission)
-          && packageManager.checkPermission(PERMISSION_BRAILLE_DISPLAY, service.packageName)
-              == PackageManager.PERMISSION_GRANTED) {
-        allowed.add(new ComponentName(service.packageName, service.name));
+    for (Map.Entry<String, ComponentName> service :
+        ExternalDisplayApps.displayServices(context, flags).entrySet()) {
+      State state = ExternalDisplayApps.state(approvals, service.getKey());
+      if (state == State.ALLOWED) {
+        allowed.add(service.getValue());
+      } else if (state == State.UNKNOWN && ask) {
+        ExternalDisplayApproval.ask(context, service.getKey());
       }
     }
     return allowed;
+  }
+
+  private boolean isAllowed(String app) {
+    return ExternalDisplayApps.holdsPermission(context, app)
+        && ExternalDisplayApps.state(approvals, app) == State.ALLOWED;
   }
 
   private void startDisplay(Connection connection, String name, int cellCount) {
@@ -230,11 +297,10 @@ public final class ExternalBrailleDisplays {
     connection.cellCount = Math.max(cellCount, 0);
     connection.waiting = true;
     if (active == connection) {
-      controller.onStop();
-      active = null;
+      stopActive();
     }
     if (active == null) {
-      activate(connection);
+      activateWaiting();
     }
   }
 
@@ -242,24 +308,29 @@ public final class ExternalBrailleDisplays {
     connection.waiting = false;
     if (active == connection) {
       stopActive();
-      for (Connection waiting : connections.values()) {
-        if (waiting.waiting && waiting.display != null) {
-          activate(waiting);
-          break;
-        }
-      }
+      activateWaiting();
     }
   }
 
-  private void activate(Connection connection) {
-    active = connection;
-    controller.onStart(
-        new ExternalDisplayer(connection.name, connection.cellCount, connection.display));
+  /** Uses a display that has started and waits, unless one is in use, from BRLTTY or an app. */
+  private void activateWaiting() {
+    if (active != null || brlttyStarted || !started) {
+      return;
+    }
+    for (Connection waiting : connections.values()) {
+      if (waiting.waiting && waiting.display != null) {
+        active = waiting;
+        ExternalDisplayApproval.showInUse(context, waiting.component.getPackageName());
+        controller.onStart(new ExternalDisplayer(waiting.name, waiting.cellCount, waiting.display));
+        return;
+      }
+    }
   }
 
   private void stopActive() {
     if (active != null) {
       active = null;
+      ExternalDisplayApproval.hideInUse(context);
       controller.onStop();
     }
   }
@@ -327,7 +398,7 @@ public final class ExternalBrailleDisplays {
     }
 
     boolean bind() {
-      Intent intent = new Intent(ACTION_BRAILLE_DISPLAY).setComponent(component);
+      Intent intent = new Intent(ExternalDisplayApps.ACTION_BRAILLE_DISPLAY).setComponent(component);
       bound = context.bindService(intent, this, Context.BIND_AUTO_CREATE);
       if (!bound) {
         BrailleDisplayLog.w(TAG, "couldn't bind " + component.flattenToShortString());
@@ -357,12 +428,9 @@ public final class ExternalBrailleDisplays {
         unbind();
         return;
       }
-      // Taking the permission back stops the app, but Android starts its service again for this
+      // The app may have stopped being allowed while Android started its service again for this
       // binding, so check again.
-      if (context
-              .getPackageManager()
-              .checkPermission(PERMISSION_BRAILLE_DISPLAY, component.getPackageName())
-          != PackageManager.PERMISSION_GRANTED) {
+      if (!isAllowed(component.getPackageName())) {
         unbind();
         connections.remove(component);
         return;

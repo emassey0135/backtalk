@@ -57,8 +57,11 @@ public class BrailleDisplay implements BrailleDisplayForTalkBack, BrailleDisplay
             talkBackForBrailleCommon,
             brailleImeProvider);
     this.accessibilityService = accessibilityService;
-    this.brailleDisplayManager = new BrailleDisplayManager(accessibilityService, controller);
     this.externalBrailleDisplays = new ExternalBrailleDisplays(accessibilityService, controller);
+    // Displays connected through BRLTTY and displays from other apps take turns with the controller.
+    this.brailleDisplayManager =
+        new BrailleDisplayManager(
+            accessibilityService, externalBrailleDisplays.brlttyController());
     BrailleCommonTalkBackSpeaker.getInstance().initialize(talkBackForBrailleCommon);
   }
 
@@ -88,8 +91,7 @@ public class BrailleDisplay implements BrailleDisplayForTalkBack, BrailleDisplay
   public void onAccessibilityEvent(AccessibilityEvent accessibilityEvent) {
     if (isRunning) {
       brailleDisplayManager.onAccessibilityEvent(accessibilityEvent);
-      externalBrailleDisplays.onAccessibilityEvent(
-          accessibilityEvent, brailleDisplayManager.isDisplayConnected());
+      externalBrailleDisplays.onAccessibilityEvent(accessibilityEvent);
     }
   }
 

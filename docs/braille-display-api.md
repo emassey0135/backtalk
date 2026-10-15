@@ -4,17 +4,17 @@ An app can give Backtalk a braille display that Backtalk can't reach on its own,
 
 ## What the user controls
 
-Backtalk only uses displays from apps that the user has allowed. An app is allowed when it has Backtalk's braille display permission. The user grants it when the app asks, in Android's own permission dialog, or with adb:
+A display can read everything Backtalk shows, which can be anything on the screen, and its keys can do anything that a braille display's keys can, so it can control the device. Backtalk only uses displays from apps that the user allows in Backtalk, after a warning that says so:
 
-```
-adb shell pm grant com.example.display fyi.quin.backtalk.permission.BRAILLE_DISPLAY
-```
+- When Backtalk finds an app that can be a display and the user hasn't answered for it yet, it asks with a notification, which opens the warning.
+- An app can also open the warning itself (see below).
+- **Displays from other apps** in Backtalk's braille display settings lists every app that can be a display, and the user can allow or stop allowing each one there. Allowing one there shows the warning too.
 
-The user can take it back at any time in the app's permissions in Android's settings. A display's keys can do anything that a braille display's keys can, so Backtalk doesn't limit what an allowed display sends or how quickly.
+While a display from an app is in use, Backtalk shows a notification that says which app it is. Backtalk doesn't limit what an allowed display sends or how quickly.
 
 ## Your app's manifest
 
-Ask for the permission, and provide a service that only Backtalk can bind:
+Ask for the permission, which only lets your app ask to be a display, and provide a service that only Backtalk can bind:
 
 ```xml
 <uses-permission android:name="fyi.quin.backtalk.permission.BRAILLE_DISPLAY" />
@@ -31,7 +31,7 @@ Ask for the permission, and provide a service that only Backtalk can bind:
 </application>
 ```
 
-On Android 11 and later, also make Backtalk visible to your app, so that you can ask for the permission:
+On Android 11 and later, also make Backtalk visible to your app, so that you can reach it:
 
 ```xml
 <queries>
@@ -39,7 +39,19 @@ On Android 11 and later, also make Backtalk visible to your app, so that you can
 </queries>
 ```
 
-Backtalk binds your service while it's running, so your app keeps running while Backtalk does, and Backtalk binds it again if it stops. Backtalk looks for allowed displays when it starts and when an app is installed or updated. Once the user allows your app, tell Backtalk to look again:
+Backtalk binds your service once the user allows your app, and keeps it bound while it's running, so your app keeps running while Backtalk does; it binds it again if it stops. Backtalk looks for displays when it starts, when an app is installed or updated, and when the user allows or stops allowing one.
+
+To ask the user straight away, rather than waiting for Backtalk's notification, open the warning:
+
+```kotlin
+context.startActivity(
+  Intent("fyi.quin.backtalk.action.ASK_BRAILLE_DISPLAY")
+    .setPackage("fyi.quin.backtalk")
+    .putExtra("fyi.quin.backtalk.extra.PACKAGE", context.packageName)
+    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+```
+
+It does nothing if your app is allowed already. To have Backtalk look for displays again, such as after your app's hardware appears, send:
 
 ```kotlin
 context.sendBroadcast(
@@ -84,4 +96,4 @@ All of these calls are one-way, so they return at once.
 
 ## One display at a time
 
-Backtalk uses one display at a time. If several allowed apps start a display, Backtalk uses the first, and the others wait until it stops. Don't connect a display through Bluetooth or USB while one from an app is in use; they would both drive the same part of Backtalk.
+Backtalk uses one display at a time. A display connected through Bluetooth or USB comes first: while one is connected, displays from apps wait, and one that is in use steps aside when it connects and comes back when it disconnects. If several allowed apps start a display, Backtalk uses the first, and the others wait until it stops.
